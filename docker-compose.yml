@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  web:
+    build: .
+    image: my_fastapi_service:latest
+    container_name: fastapi_service
+    env_file: .env
+    volumes:
+      - ./Model:/app/Model
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
