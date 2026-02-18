@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   db:
     image: postgres:16
@@ -22,7 +21,7 @@ services:
 
   worker:
     build: .
-    command: python jobs/scheduler.py
+    command: python -m jobs.scheduler
     env_file: .env
     depends_on:
       - db
