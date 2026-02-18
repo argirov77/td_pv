@@ -9,6 +9,13 @@ def _required(name: str) -> str:
     return value
 
 
+def _int_from_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+    return int(value)
+
+
 @dataclass(frozen=True)
 class Settings:
     forecast_refresh_hours: int
@@ -24,13 +31,13 @@ class Settings:
 
 def load_settings() -> Settings:
     return Settings(
-        forecast_refresh_hours=int(_required("FORECAST_REFRESH_HOURS")),
-        forecast_days_ahead=int(_required("FORECAST_DAYS_AHEAD")),
-        forecast_history_days=int(_required("FORECAST_HISTORY_DAYS")),
+        forecast_refresh_hours=_int_from_env("FORECAST_REFRESH_HOURS", default=3),
+        forecast_days_ahead=_int_from_env("FORECAST_DAYS_AHEAD", default=7),
+        forecast_history_days=_int_from_env("FORECAST_HISTORY_DAYS", default=365),
         archive_db_dsn=_required("ARCHIVE_DB_DSN"),
         solar_db_dsn=_required("SOLAR_DB_DSN"),
         forecast_db_dsn=_required("FORECAST_DB_DSN"),
         weather_api_key=_required("WEATHER_API_KEY"),
         model_version=_required("MODEL_VERSION"),
-        max_topics_per_request=int(_required("MAX_TOPICS_PER_REQUEST")),
+        max_topics_per_request=_int_from_env("MAX_TOPICS_PER_REQUEST", default=1000),
     )
