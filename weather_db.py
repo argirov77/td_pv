@@ -90,8 +90,23 @@ def extract_weather_from_db(user_object_id, prediction_date):
     except Exception:
         return []
 
+    df["temp_c"] = pd.to_numeric(df["temp_c"], errors="coerce")
+    df["cloud"] = pd.to_numeric(df["cloud"], errors="coerce")
+
     df.set_index("time", inplace=True)
     df.sort_index(inplace=True)
-    df_15min = df.resample("15min").interpolate(method="linear").reset_index()
+
+    numeric_cols = df.select_dtypes(include="number").columns
+    if numeric_cols.empty:
+        return []
+
+    df_15min = (
+        df[numeric_cols]
+        .resample("15min")
+        .interpolate(method="linear")
+        .reset_index()
+    )
+    if "cloud" in df_15min.columns:
+        df_15min["cloud"] = df_15min["cloud"].round().astype("Int64")
     df_15min["time"] = df_15min["time"].dt.strftime("%Y-%m-%d %H:%M")
     return df_15min.to_dict(orient="records")
