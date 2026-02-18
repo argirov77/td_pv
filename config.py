@@ -24,13 +24,13 @@ class Settings:
 
 def load_settings() -> Settings:
     return Settings(
-        forecast_refresh_hours=int(os.getenv("FORECAST_REFRESH_HOURS", "3")),
-        forecast_days_ahead=int(os.getenv("FORECAST_DAYS_AHEAD", "7")),
-        forecast_history_days=int(os.getenv("FORECAST_HISTORY_DAYS", "365")),
+        forecast_refresh_hours=int(_required("FORECAST_REFRESH_HOURS")),
+        forecast_days_ahead=int(_required("FORECAST_DAYS_AHEAD")),
+        forecast_history_days=int(_required("FORECAST_HISTORY_DAYS")),
         archive_db_dsn=_required("ARCHIVE_DB_DSN"),
         solar_db_dsn=_required("SOLAR_DB_DSN"),
         forecast_db_dsn=_required("FORECAST_DB_DSN"),
-        weather_api_key=os.getenv("WEATHER_API_KEY", ""),
-        model_version=os.getenv("MODEL_VERSION", "default"),
-        max_topics_per_request=int(os.getenv("MAX_TOPICS_PER_REQUEST", "1000")),
+        weather_api_key=_required("WEATHER_API_KEY"),
+        model_version=_required("MODEL_VERSION"),
+        max_topics_per_request=int(_required("MAX_TOPICS_PER_REQUEST")),
     )
