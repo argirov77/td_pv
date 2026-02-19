@@ -95,9 +95,6 @@ def extract_weather_from_db(user_object_id, prediction_date):
 
     df.set_index("time", inplace=True)
     df.sort_index(inplace=True)
-    if df.index.has_duplicates:
-        logger.warning("[extract_weather_from_db] Duplicate timestamps detected; aggregating before resample.")
-        df = df.groupby(level=0).mean(numeric_only=True)
 
     numeric_cols = df.select_dtypes(include="number").columns
     if numeric_cols.empty:
