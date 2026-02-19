@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: forecast_cache
+      POSTGRES_DB: forecast
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
@@ -20,6 +20,8 @@ services:
       - db
     ports:
       - "8000:8000"
+    volumes:
+      - ./Model:/app/Model
 
   worker:
     build: .
@@ -29,6 +31,8 @@ services:
       - .env
     depends_on:
       - db
+    volumes:
+      - ./Model:/app/Model
 
 volumes:
   pgdata:
