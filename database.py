@@ -12,6 +12,10 @@ settings = load_settings()
 engine_spec = create_engine(settings.archive_db_dsn, pool_pre_ping=True)
 
 
+class DatabaseReadError(RuntimeError):
+    """Raised when we cannot read data from the archive DB."""
+
+
 def get_tag_specification(topic: str) -> dict | None:
     try:
         with engine_spec.connect() as conn:
@@ -33,3 +37,51 @@ def get_all_topics() -> list[str]:
     except Exception as exc:
         logger.error("Error reading topics from tag_specification: %s", exc)
         return []
+
+
+def get_all_topics_or_raise() -> list[str]:
+    try:
+        with engine_spec.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT DISTINCT tag
+                    FROM tag_specification
+                    WHERE tag IS NOT NULL
+                    ORDER BY tag
+                    """
+                )
+            ).fetchall()
+        return [row[0] for row in rows]
+    except Exception as exc:
+        logger.error("Error reading topics from tag_specification: %s", exc)
+        raise DatabaseReadError("failed to read topics") from exc
+
+
+def get_all_topic_specifications_or_raise() -> list[dict]:
+    try:
+        with engine_spec.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT
+                        tag,
+                        sm_user_object_id,
+                        latitude,
+                        longitude,
+                        tilt,
+                        azimuth,
+                        module_length,
+                        module_width,
+                        module_efficiency,
+                        total_panels
+                    FROM tag_specification
+                    WHERE tag IS NOT NULL
+                    ORDER BY tag
+                    """
+                )
+            ).mappings().all()
+        return [dict(row) for row in rows]
+    except Exception as exc:
+        logger.error("Error reading topic specifications: %s", exc)
+        raise DatabaseReadError("failed to read topic specifications") from exc
