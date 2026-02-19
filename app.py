@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from config import load_settings
@@ -9,7 +9,7 @@ from database import (
     get_all_topic_specifications_or_raise,
     get_all_topics_or_raise,
 )
-from forecast_db import run_migrations, select_points
+from forecast_db import run_migrations, select_available_forecasts, select_points
 
 settings = load_settings()
 app = FastAPI()
@@ -45,9 +45,43 @@ class TopicSpecListResponse(BaseModel):
     specs: list[TopicSpecItem] = Field(default_factory=list)
 
 
+class AvailableForecastsResponse(BaseModel):
+    count: int
+    topics: list[str] = Field(default_factory=list)
+    dates: list[str] = Field(default_factory=list)
+
+
 @app.on_event("startup")
 def startup() -> None:
     run_migrations()
+
+
+@app.get("/forecasts/available", response_model=AvailableForecastsResponse)
+def get_available_forecasts(
+    topic: str | None = Query(default=None),
+    date_from: str | None = Query(default=None, description="Дата от (вкл.) във формат YYYY-MM-DD"),
+    date_to: str | None = Query(default=None, description="Дата до (изкл.) във формат YYYY-MM-DD"),
+) -> AvailableForecastsResponse:
+    parsed_date_from: datetime | None = None
+    parsed_date_to: datetime | None = None
+
+    if date_from:
+        try:
+            parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Невалиден date_from. Очаква се YYYY-MM-DD.")
+
+    if date_to:
+        try:
+            parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Невалиден date_to. Очаква се YYYY-MM-DD.")
+
+    if parsed_date_from and parsed_date_to and parsed_date_from >= parsed_date_to:
+        raise HTTPException(status_code=400, detail="date_from трябва да е по-малка от date_to.")
+
+    payload = select_available_forecasts(topic=topic, date_from=parsed_date_from, date_to=parsed_date_to)
+    return AvailableForecastsResponse(**payload)
 
 
 @app.post("/predict")

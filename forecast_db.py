@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from psycopg2.extras import execute_values
 from sqlalchemy import create_engine, text
@@ -110,3 +110,48 @@ def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -
         })
 
     return result
+
+
+def select_available_forecasts(
+    topic: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> dict[str, object]:
+    where_parts: list[str] = []
+    params: dict[str, object] = {}
+
+    if topic:
+        where_parts.append("topic = :topic")
+        params["topic"] = topic
+    if date_from:
+        where_parts.append("ts >= :date_from")
+        params["date_from"] = date_from
+    if date_to:
+        where_parts.append("ts < :date_to")
+        params["date_to"] = date_to
+
+    where_clause = ""
+    if where_parts:
+        where_clause = "WHERE " + " AND ".join(where_parts)
+
+    count_query = text(f"SELECT COUNT(*) AS total FROM pv_forecast_points {where_clause}")
+    topics_query = text(f"SELECT DISTINCT topic FROM pv_forecast_points {where_clause} ORDER BY topic")
+    dates_query = text(
+        f"""
+        SELECT DISTINCT DATE(ts) AS day
+        FROM pv_forecast_points
+        {where_clause}
+        ORDER BY day
+        """
+    )
+
+    with engine.connect() as conn:
+        total = int(conn.execute(count_query, params).scalar_one())
+        found_topics = [row[0] for row in conn.execute(topics_query, params).all()]
+        found_dates = [row[0].isoformat() for row in conn.execute(dates_query, params).all() if row[0] is not None]
+
+    return {
+        "count": total,
+        "topics": found_topics,
+        "dates": found_dates,
+    }
