@@ -8,5 +8,5 @@ python-dotenv
 pvlib
 pandas
 sqlalchemy
-javaobj-py3        
-joblib  
+javaobj-py3
+lightgbm
