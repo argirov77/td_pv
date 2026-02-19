@@ -5,11 +5,9 @@ from pydantic import BaseModel, Field
 
 from config import load_settings
 from forecast_db import run_migrations, select_points
-from routes.test_ui import router as test_ui_router
 
 settings = load_settings()
 app = FastAPI()
-app.include_router(test_ui_router)
 
 
 class PredictRequest(BaseModel):
