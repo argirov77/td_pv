@@ -7,6 +7,11 @@ WORKDIR /app
 # Копираме файла със зависимости
 COPY requirements.txt .
 
+# Инсталираме системни библиотеки за ML зависимости (напр. LightGBM изисква libgomp)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Актуализираме pip и инсталираме зависимостите без кеш
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
