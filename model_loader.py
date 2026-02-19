@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import joblib
 import logging
 import numpy as np
@@ -7,7 +8,18 @@ import pandas as pd
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = os.getenv("MODEL_DIR", "C:/Users/Dmitrii/predict_pow/v1/Model")
+
+
+def _resolve_model_dir() -> str:
+    env_model_dir = os.getenv("MODEL_DIR")
+    if env_model_dir:
+        return env_model_dir
+
+    project_model_dir = Path(__file__).resolve().parent / "Model"
+    return str(project_model_dir)
+
+
+MODEL_DIR = _resolve_model_dir()
 
 def load_model(tag: str):
     """
@@ -22,16 +34,16 @@ def load_model(tag: str):
 
     model_path = os.path.join(MODEL_DIR, model_file)
     logger.debug(f"[load_model] Търсене на файл с модел: {model_path}")
-    print("MODEL_DIR =", repr(MODEL_DIR))
-    print("model_file =", repr(model_file))
-    print("model_path =", repr(model_path))
-    print("os.path.exists(model_path) =", os.path.exists(model_path))
+    logger.debug(f"[load_model] MODEL_DIR = {MODEL_DIR!r}")
+    logger.debug(f"[load_model] model_file = {model_file!r}")
+    logger.debug(f"[load_model] model_path = {model_path!r}")
+    logger.debug(f"[load_model] os.path.exists(model_path) = {os.path.exists(model_path)}")
     
     if not os.path.exists(model_path):
         logger.error(f"[load_model] Файлът с модел не е намерен: {model_path}")
         fallback_model = "P0063H01_E001_model.pkl"
         fallback_path = os.path.join(MODEL_DIR, fallback_model)
-        print("Fallback model path:", fallback_path)
+        logger.debug(f"[load_model] Fallback model path: {fallback_path}")
         if os.path.exists(fallback_path):
             try:
                 logger.debug(f"[load_model] Опит за зареждане на резервен модел: {fallback_path}")
