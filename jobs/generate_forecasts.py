@@ -100,9 +100,10 @@ def _topic_coords(topic: str) -> tuple[float, float]:
     return float(spec.get("latitude", 0.0)), float(spec.get("longitude", 0.0))
 
 
-def run_history() -> None:
+def run_history(days: int | None = None) -> None:
+    history_days = settings.forecast_history_days if days is None else days
     now = datetime.utcnow()
-    start = now - timedelta(days=settings.forecast_history_days)
+    start = now - timedelta(days=history_days)
     run_migrations()
     ensure_month_partitions(start, now)
 
@@ -115,7 +116,7 @@ def run_history() -> None:
         if uid is None:
             continue
 
-        for day_offset in range(settings.forecast_history_days + 1):
+        for day_offset in range(history_days + 1):
             day = (start + timedelta(days=day_offset)).date()
             records = extract_weather_from_db(uid, day.strftime("%Y-%m-%d"))
             rows.extend(_build_rows_for_topic(topic, records))
@@ -130,12 +131,13 @@ def run_history() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["future", "history"], required=True)
+    parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
 
     if args.mode == "future":
         run_future()
     else:
-        run_history()
+        run_history(days=args.days)
 
 
 if __name__ == "__main__":

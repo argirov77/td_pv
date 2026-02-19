@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from config import load_settings
@@ -10,6 +10,7 @@ from database import (
     get_all_topics_or_raise,
 )
 from forecast_db import run_migrations, select_available_forecasts, select_points
+from jobs.history_service import history_job_service
 
 settings = load_settings()
 app = FastAPI()
@@ -49,6 +50,25 @@ class AvailableForecastsResponse(BaseModel):
     count: int
     topics: list[str] = Field(default_factory=list)
     dates: list[str] = Field(default_factory=list)
+
+
+class GenerateHistoryRequest(BaseModel):
+    days: int | None = Field(default=None, ge=1, description="Брой дни назад за генериране")
+
+
+class JobResponse(BaseModel):
+    id: str
+    state: str
+    days: int
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+
+
+class GenerateHistoryResponse(BaseModel):
+    started: bool
+    job: JobResponse
 
 
 @app.on_event("startup")
@@ -96,6 +116,32 @@ def predict(request: PredictRequest):
 
     day_end = day_start + timedelta(days=1)
     return select_points(request.topics, day_start, day_end)
+
+
+@app.post("/jobs/generate-history", response_model=GenerateHistoryResponse, status_code=status.HTTP_202_ACCEPTED)
+def generate_history_job(
+    payload: GenerateHistoryRequest,
+    background_tasks: BackgroundTasks,
+) -> GenerateHistoryResponse:
+    days = payload.days if payload.days is not None else settings.forecast_history_days
+    if days < 1:
+        raise HTTPException(status_code=400, detail="days трябва да е положително число.")
+
+    creation = history_job_service.create_job(days=days)
+    job = creation["job"]
+
+    if creation["started"]:
+        background_tasks.add_task(history_job_service.run_job, job["id"])
+
+    return GenerateHistoryResponse(started=creation["started"], job=JobResponse(**job))
+
+
+@app.get("/jobs/{job_id}", response_model=JobResponse)
+def get_job_status(job_id: str) -> JobResponse:
+    job = history_job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JobResponse(**job)
 
 
 @app.get("/topics", response_model=TopicListResponse)
