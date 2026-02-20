@@ -8,8 +8,8 @@ import math
 from database import get_tag_specification
 from radiation import calculate_panel_irradiance
 from production import calculate_system_production
-from model_loader import load_model
-from weather_service import get_weather_for_date
+from model_loader import load_model, predict_power
+from weather_db import extract_weather_from_db
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -87,19 +87,11 @@ def predict(request: PredictRequest):
         panel_area = (module_length / 1000) * (module_width / 1000)
         module_eff = module_eff_percent / 100.0
 
-        weather_result = get_weather_for_date(
-            user_object_id=int(sm_user_object_id),
-            latitude=float(latitude),
-            longitude=float(longitude),
-            prediction_date=forecast_date,
-        )
-        weather_data = weather_result["records"]
-        if weather_result["status"] == "no_data":
-            return {
-                "source": weather_result["source"],
-                "status": "no_weather_data",
-                "predictions": [],
-            }
+        # Извличаме метеоданните като списък записи
+        weather_data = extract_weather_from_db(sm_user_object_id, request.prediction_date)
+        if not weather_data:
+            logger.error("Не са намерени метеоданни за дадения обект и дата")
+            raise HTTPException(status_code=404, detail="Не са намерени метеоданни за този обект/дата.")
         
         model_file = f"{request.tag}_model.pkl"
         model = load_model(model_file)
@@ -152,8 +144,7 @@ def predict(request: PredictRequest):
                 
                 pred = {
                     "time": dt.strftime("%Y-%m-%d %H:%M"),
-                    "system_power": system_power,
-                    "source": weather_result["source"],
+                    "system_power": system_power
                 }
                 predictions.append(sanitize_float_values(pred))
             except Exception as e:
@@ -163,17 +154,10 @@ def predict(request: PredictRequest):
                     "time": fallback_time,
                     "system_power": 0
                 })
-        return {"source": weather_result["source"], "status": "ok", "predictions": predictions}
+        return predictions
     except Exception as e:
         logger.exception("Ненадеждно хваната грешка в endpoint /predict")
         raise HTTPException(status_code=500, detail="Вътрешна сървърна грешка")
-
-
-
-class WeatherInfoResponse(BaseModel):
-    source: str
-    status: str
-    points: list[dict] = Field(default_factory=list)
 
 class WeatherInfoRequest(BaseModel):
     tag: str
@@ -187,7 +171,7 @@ class WeatherInfoRequest(BaseModel):
             }
         }
 
-@app.post("/weather_info", response_model=WeatherInfoResponse)
+@app.post("/weather_info")
 def weather_info(request: WeatherInfoRequest):
     """
     Извлича метеоданни (температура и облачност) за посочения обект.
@@ -213,22 +197,11 @@ def weather_info(request: WeatherInfoRequest):
         if not sm_user_object_id:
             logger.error("Липсва sm_user_object_id в спецификацията")
             raise HTTPException(status_code=400, detail="Липсва sm_user_object_id в спецификацията")
-
-        latitude = spec.get("latitude")
-        longitude = spec.get("longitude")
-        if latitude is None or longitude is None:
-            logger.error("Липсват координати в спецификацията")
-            raise HTTPException(status_code=400, detail="Липсват координати в спецификацията")
-
-        weather_result = get_weather_for_date(
-            user_object_id=int(sm_user_object_id),
-            latitude=float(latitude),
-            longitude=float(longitude),
-            prediction_date=forecast_date,
-        )
-        weather_data = weather_result["records"]
-        if weather_result["status"] == "no_data":
-            return {"source": weather_result["source"], "status": "no_data", "points": []}
+        
+        weather_data = extract_weather_from_db(sm_user_object_id, request.prediction_date)
+        if not weather_data:
+            logger.error("Не са намерени метеоданни за дадения обект и дата")
+            raise HTTPException(status_code=404, detail="Не са намерени метеоданни за този обект/дата.")
         
         # Ако данните са получени като списък записи, филтрираме всеки запис, оставяйки нужните полета
         sanitized = []
@@ -246,7 +219,7 @@ def weather_info(request: WeatherInfoRequest):
                 "temp_c": new_rec.get("temp_c"),
                 "cloud": new_rec.get("cloud")
             })
-        return {"source": weather_result["source"], "status": "ok", "points": sanitized}
+        return sanitized
     except Exception as e:
         logger.exception("Ненадеждно хваната грешка в endpoint /weather_info")
         raise HTTPException(status_code=500, detail="Вътрешна сървърна грешка")

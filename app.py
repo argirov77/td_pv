@@ -15,6 +15,7 @@ from database import (
 from forecast_db import run_migrations, select_available_forecasts, select_points
 from jobs.history_service import history_job_service
 from radiation import calculate_panel_irradiance
+from weather_service import get_weather_for_date
 
 settings = load_settings()
 app = FastAPI()
@@ -74,6 +75,24 @@ class GenerateHistoryResponse(BaseModel):
     started: bool
     job: JobResponse
 
+
+
+
+class WeatherInfoRequest(BaseModel):
+    tag: str
+    prediction_date: str = Field(..., description="Дата във формат YYYY-MM-DD")
+
+
+class WeatherPoint(BaseModel):
+    time: str | None = None
+    temp_c: float | None = None
+    cloud: int | None = None
+
+
+class WeatherInfoResponse(BaseModel):
+    source: Literal["archive_db", "weather_api", "none"]
+    status: Literal["ok", "no_data"]
+    points: list[WeatherPoint] = Field(default_factory=list)
 
 class ClearSkyRadiationRequest(BaseModel):
     tag: str | None = Field(default=None, description="Таг от tag_specification")
@@ -194,6 +213,71 @@ def get_topic_specs() -> TopicSpecListResponse:
 
     return TopicSpecListResponse(specs=[TopicSpecItem(**spec) for spec in specs])
 
+
+
+
+@app.post("/weather_info", response_model=WeatherInfoResponse)
+def weather_info(request: WeatherInfoRequest) -> WeatherInfoResponse:
+    try:
+        forecast_date = datetime.strptime(request.prediction_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Невалиден формат на дата. Очаква се YYYY-MM-DD")
+
+    spec = get_tag_specification(request.tag)
+    if not spec:
+        raise HTTPException(status_code=400, detail="Не е намерена спецификация за подадения таг")
+
+    sm_user_object_id = spec.get("sm_user_object_id")
+    if sm_user_object_id is None:
+        raise HTTPException(status_code=400, detail="Липсва sm_user_object_id в спецификацията")
+
+    latitude = spec.get("latitude")
+    longitude = spec.get("longitude")
+    if latitude is None or longitude is None:
+        raise HTTPException(status_code=400, detail="Липсват координати в спецификацията")
+
+    weather_result = get_weather_for_date(
+        user_object_id=int(sm_user_object_id),
+        latitude=float(latitude),
+        longitude=float(longitude),
+        prediction_date=forecast_date,
+    )
+
+    sanitized_points: list[WeatherPoint] = []
+    for rec in weather_result["records"]:
+        cloud_value = rec.get("cloud")
+        cloud_int: int | None
+        if cloud_value is None:
+            cloud_int = None
+        else:
+            try:
+                cloud_int = int(round(float(cloud_value)))
+            except (TypeError, ValueError):
+                cloud_int = None
+
+        temp_value = rec.get("temp_c")
+        temp_float: float | None
+        if temp_value is None:
+            temp_float = None
+        else:
+            try:
+                temp_float = float(temp_value)
+            except (TypeError, ValueError):
+                temp_float = None
+
+        sanitized_points.append(
+            WeatherPoint(
+                time=rec.get("time"),
+                temp_c=temp_float,
+                cloud=cloud_int,
+            )
+        )
+
+    return WeatherInfoResponse(
+        source=weather_result["source"],
+        status=weather_result["status"],
+        points=sanitized_points,
+    )
 
 @app.post("/radiation/clear-sky", response_model=ClearSkyRadiationResponse)
 def calculate_clear_sky_radiation(request: ClearSkyRadiationRequest) -> ClearSkyRadiationResponse:
