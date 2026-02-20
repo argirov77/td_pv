@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
+from typing import Literal
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from config import load_settings
@@ -8,9 +10,11 @@ from database import (
     DatabaseReadError,
     get_all_topic_specifications_or_raise,
     get_all_topics_or_raise,
+    get_tag_specification,
 )
 from forecast_db import run_migrations, select_available_forecasts, select_points
 from jobs.history_service import history_job_service
+from radiation import calculate_panel_irradiance
 
 settings = load_settings()
 app = FastAPI()
@@ -69,6 +73,33 @@ class JobResponse(BaseModel):
 class GenerateHistoryResponse(BaseModel):
     started: bool
     job: JobResponse
+
+
+class ClearSkyRadiationRequest(BaseModel):
+    tag: str | None = Field(default=None, description="Таг от tag_specification")
+    lat: float | None = Field(default=None, description="Географска ширина")
+    lon: float | None = Field(default=None, description="Географска дължина")
+    date: str = Field(..., description="Дата във формат YYYY-MM-DD")
+    tilt: float | None = Field(default=None, description="Наклон на панела")
+    azimuth: float | None = Field(default=None, description="Азимут на панела")
+    step_minutes: Literal[15, 60] = Field(default=60, description="Стъпка на времевия ред в минути")
+
+
+class ClearSkyPoint(BaseModel):
+    time: str
+    clear_sky_radiation_w_m2: float
+
+
+class ClearSkyRadiationResponse(BaseModel):
+    source: Literal["tag", "coordinates"]
+    tag: str | None = None
+    latitude: float
+    longitude: float
+    tilt: float
+    azimuth: float
+    date: str
+    step_minutes: int
+    points: list[ClearSkyPoint] = Field(default_factory=list)
 
 
 @app.on_event("startup")
@@ -162,3 +193,155 @@ def get_topic_specs() -> TopicSpecListResponse:
         raise HTTPException(status_code=503, detail="Базата данни е недостъпна. Опитайте по-късно.")
 
     return TopicSpecListResponse(specs=[TopicSpecItem(**spec) for spec in specs])
+
+
+@app.post("/radiation/clear-sky", response_model=ClearSkyRadiationResponse)
+def calculate_clear_sky_radiation(request: ClearSkyRadiationRequest) -> ClearSkyRadiationResponse:
+    try:
+        day_start = datetime.strptime(request.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Невалиден формат на дата. Очаква се YYYY-MM-DD.")
+
+    if request.tag is None and (request.lat is None or request.lon is None):
+        raise HTTPException(status_code=400, detail="Подайте или tag, или едновременно lat/lon.")
+
+    source: Literal["tag", "coordinates"]
+    tag: str | None = None
+    latitude: float
+    longitude: float
+    tilt: float
+    azimuth: float
+
+    if request.tag:
+        spec = get_tag_specification(request.tag)
+        if not spec:
+            raise HTTPException(status_code=404, detail="Не е намерена спецификация за подадения tag.")
+
+        if spec.get("latitude") is None or spec.get("longitude") is None:
+            raise HTTPException(status_code=400, detail="Липсват координати в спецификацията за tag.")
+
+        source = "tag"
+        tag = request.tag
+        latitude = float(spec["latitude"])
+        longitude = float(spec["longitude"])
+        tilt = float(spec.get("tilt") or 0.0)
+        azimuth = float(spec.get("azimuth") or 180.0)
+    else:
+        source = "coordinates"
+        latitude = float(request.lat)
+        longitude = float(request.lon)
+        tilt = float(request.tilt or 0.0)
+        azimuth = float(request.azimuth or 180.0)
+
+    points: list[ClearSkyPoint] = []
+    intervals = (24 * 60) // request.step_minutes
+    for i in range(intervals):
+        dt = day_start + timedelta(minutes=i * request.step_minutes)
+        irradiance = calculate_panel_irradiance(
+            latitude=latitude,
+            longitude=longitude,
+            dt=dt,
+            panel_tilt=tilt,
+            panel_azimuth=azimuth,
+            tz="Europe/Nicosia",
+        )
+        points.append(
+            ClearSkyPoint(
+                time=dt.strftime("%Y-%m-%d %H:%M"),
+                clear_sky_radiation_w_m2=irradiance,
+            )
+        )
+
+    return ClearSkyRadiationResponse(
+        source=source,
+        tag=tag,
+        latitude=latitude,
+        longitude=longitude,
+        tilt=tilt,
+        azimuth=azimuth,
+        date=request.date,
+        step_minutes=request.step_minutes,
+        points=points,
+    )
+
+
+@app.get("/test-ui", response_class=HTMLResponse)
+def test_ui() -> HTMLResponse:
+    return HTMLResponse(
+        """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PV Test UI</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .panel { max-width: 1100px; margin-bottom: 24px; }
+    form { display: flex; gap: 12px; margin-bottom: 12px; }
+    input, button { padding: 8px; }
+    canvas { width: 100%; height: 300px; }
+  </style>
+</head>
+<body>
+  <h2>PV Test UI</h2>
+  <form id="controls">
+    <input id="tag" placeholder="tag" value="P0086H01/I002/Ptot" />
+    <input id="date" type="date" />
+    <button type="submit">Load</button>
+  </form>
+
+  <div class="panel">
+    <h3>Actual/Model values (placeholder)</h3>
+    <canvas id="mainChart"></canvas>
+  </div>
+
+  <div class="panel">
+    <h3>Clear-sky radiation</h3>
+    <canvas id="clearSkyChart"></canvas>
+  </div>
+
+  <script>
+    const dateInput = document.getElementById('date');
+    dateInput.value = new Date().toISOString().slice(0, 10);
+
+    const mainChart = new Chart(document.getElementById('mainChart'), {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+
+    const clearSkyChart = new Chart(document.getElementById('clearSkyChart'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Clear-sky radiation (W/m²)', data: [], borderColor: '#1f77b4', tension: 0.2 }] },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+
+    document.getElementById('controls').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        tag: document.getElementById('tag').value,
+        date: dateInput.value,
+        step_minutes: 15,
+      };
+
+      const res = await fetch('/radiation/clear-sky', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      const labels = data.points.map((p) => p.time.slice(11));
+      const values = data.points.map((p) => p.clear_sky_radiation_w_m2);
+
+      clearSkyChart.data.labels = labels;
+      clearSkyChart.data.datasets[0].data = values;
+      clearSkyChart.update();
+    });
+  </script>
+</body>
+</html>
+        """
+    )
