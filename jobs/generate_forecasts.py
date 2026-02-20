@@ -9,14 +9,13 @@ from forecast_db import bulk_upsert_points, delete_future, ensure_month_partitio
 from model_loader import load_model
 from production import calculate_system_production
 from radiation import calculate_panel_irradiance
-from weather_api import get_forecast_by_coords
-from weather_db import extract_weather_from_db
+from weather_service import get_weather_for_date
 
 THRESHOLD_RADIATION = 40
 settings = load_settings()
 
 
-def _build_rows_for_topic(topic: str, records: list[dict]) -> list[tuple[str, datetime, float]]:
+def _build_rows_for_topic(topic: str, records: list[dict], source: str) -> list[tuple[str, datetime, float, str]]:
     spec = get_tag_specification(topic)
     if not spec:
         return []
@@ -68,7 +67,7 @@ def _build_rows_for_topic(topic: str, records: list[dict]) -> list[tuple[str, da
             commissioning_date=datetime.strptime(str(comm), "%Y-%m-%d"),
             degradation_rate=degr,
         )
-        out.append((topic, dt, float(power)))
+        out.append((topic, dt, float(power), source))
     return out
 
 
@@ -81,10 +80,24 @@ def run_future() -> None:
 
     rows = []
     for topic in get_all_topics():
+        spec = get_tag_specification(topic)
+        if not spec:
+            continue
+        uid = spec.get("sm_user_object_id")
+        lat = spec.get("latitude")
+        lon = spec.get("longitude")
+        if uid is None or lat is None or lon is None:
+            continue
+
         for day_offset in range(settings.forecast_days_ahead + 1):
             target_day = (now + timedelta(days=day_offset)).date()
-            records = get_forecast_by_coords(*_topic_coords(topic), target_day)
-            rows.extend(_build_rows_for_topic(topic, records))
+            weather_result = get_weather_for_date(
+                user_object_id=int(uid),
+                latitude=float(lat),
+                longitude=float(lon),
+                prediction_date=target_day,
+            )
+            rows.extend(_build_rows_for_topic(topic, weather_result["records"], weather_result["source"]))
             if len(rows) >= 5000:
                 bulk_upsert_points(rows)
                 rows.clear()
@@ -92,12 +105,6 @@ def run_future() -> None:
     if rows:
         bulk_upsert_points(rows)
 
-
-def _topic_coords(topic: str) -> tuple[float, float]:
-    spec = get_tag_specification(topic)
-    if not spec:
-        return 0.0, 0.0
-    return float(spec.get("latitude", 0.0)), float(spec.get("longitude", 0.0))
 
 
 def run_history(days: int | None = None) -> None:
@@ -118,8 +125,17 @@ def run_history(days: int | None = None) -> None:
 
         for day_offset in range(history_days + 1):
             day = (start + timedelta(days=day_offset)).date()
-            records = extract_weather_from_db(uid, day.strftime("%Y-%m-%d"))
-            rows.extend(_build_rows_for_topic(topic, records))
+            lat = spec.get("latitude")
+            lon = spec.get("longitude")
+            if lat is None or lon is None:
+                continue
+            weather_result = get_weather_for_date(
+                user_object_id=int(uid),
+                latitude=float(lat),
+                longitude=float(lon),
+                prediction_date=day,
+            )
+            rows.extend(_build_rows_for_topic(topic, weather_result["records"], weather_result["source"]))
             if len(rows) >= 5000:
                 bulk_upsert_points(rows)
                 rows.clear()
