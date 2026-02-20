@@ -13,6 +13,7 @@ from database import (
     get_tag_specification,
 )
 from forecast_db import run_migrations, select_available_forecasts, select_points
+from jobs.generate_forecasts import _build_rows_for_topic
 from jobs.history_service import history_job_service
 from radiation import calculate_panel_irradiance
 from weather_service import get_weather_for_date
@@ -24,6 +25,17 @@ app = FastAPI()
 class PredictRequest(BaseModel):
     prediction_date: str = Field(..., description="Дата във формат YYYY-MM-DD")
     topics: list[str] = Field(default_factory=list)
+
+
+class PredictionPoint(BaseModel):
+    x: str
+    y: float
+    source: str
+
+
+class PredictResponse(BaseModel):
+    mode: Literal["cache", "recompute"]
+    points: dict[str, list[PredictionPoint]] = Field(default_factory=dict)
 
 
 class TopicItem(BaseModel):
@@ -154,8 +166,8 @@ def get_available_forecasts(
     return AvailableForecastsResponse(**payload)
 
 
-@app.post("/predict")
-def predict(request: PredictRequest):
+@app.post("/predict", response_model=PredictResponse)
+def predict(request: PredictRequest) -> PredictResponse:
     if len(request.topics) > settings.max_topics_per_request:
         raise HTTPException(status_code=400, detail=f"topics limit exceeded: {settings.max_topics_per_request}")
 
@@ -165,7 +177,47 @@ def predict(request: PredictRequest):
         raise HTTPException(status_code=400, detail="Невалиден формат на дата. Очаква се YYYY-MM-DD.")
 
     day_end = day_start + timedelta(days=1)
-    return select_points(request.topics, day_start, day_end)
+    return PredictResponse(mode="cache", points=select_points(request.topics, day_start, day_end))
+
+
+@app.post("/predict/runtime", response_model=PredictResponse)
+def predict_runtime(request: PredictRequest) -> PredictResponse:
+    if len(request.topics) > settings.max_topics_per_request:
+        raise HTTPException(status_code=400, detail=f"topics limit exceeded: {settings.max_topics_per_request}")
+
+    try:
+        day_start = datetime.strptime(request.prediction_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Невалиден формат на дата. Очаква се YYYY-MM-DD.")
+
+    day_end = day_start + timedelta(days=1)
+    points: dict[str, list[PredictionPoint]] = {topic: [] for topic in request.topics}
+
+    for topic in request.topics:
+        spec = get_tag_specification(topic)
+        if not spec:
+            continue
+
+        uid = spec.get("sm_user_object_id")
+        lat = spec.get("latitude")
+        lon = spec.get("longitude")
+        if uid is None or lat is None or lon is None:
+            continue
+
+        weather_result = get_weather_for_date(
+            user_object_id=int(uid),
+            latitude=float(lat),
+            longitude=float(lon),
+            prediction_date=day_start.date(),
+        )
+        rows = _build_rows_for_topic(topic, weather_result["records"], weather_result["source"])
+        points[topic] = [
+            PredictionPoint(x=ts.strftime("%Y-%m-%d %H:%M"), y=power, source=source)
+            for _, ts, power, source in rows
+            if day_start <= ts < day_end
+        ]
+
+    return PredictResponse(mode="recompute", points=points)
 
 
 @app.post("/jobs/generate-history", response_model=GenerateHistoryResponse, status_code=status.HTTP_202_ACCEPTED)
