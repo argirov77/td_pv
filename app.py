@@ -411,7 +411,7 @@ def test_ui() -> HTMLResponse:
     return HTMLResponse(
         """
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -478,7 +478,7 @@ def test_ui() -> HTMLResponse:
     <div class="header">
       <div>
         <h1>PV API Test Console</h1>
-        <div class="meta">Smoke-путь API: topics → weather → clear-sky → predict → history job → forecasts available</div>
+        <div class="meta">Smoke API path: topics → weather → clear-sky → predict → history job → forecasts available</div>
       </div>
       <div class="inline">
         <span id="backendStatus" class="status-pill status-warning">Backend: checking…</span>
@@ -489,10 +489,10 @@ def test_ui() -> HTMLResponse:
     <div class="layout">
       <div class="column">
         <section class="card">
-          <h3>Контекст запроса</h3>
+          <h3>Request Context</h3>
           <div class="field"><label for="baseUrl">Base URL</label><input id="baseUrl" /></div>
           <div class="field"><label for="dateInput">Date</label><input id="dateInput" type="date" /></div>
-          <div class="field"><label for="topicSelect">Topic</label><select id="topicSelect"><option value="">-- выберите topic --</option></select></div>
+          <div class="field"><label for="topicSelect">Topic</label><select id="topicSelect"><option value="">-- select topic --</option></select></div>
           <div class="field"><label for="stepMinutes">Step minutes</label><select id="stepMinutes"><option value="15">15</option><option value="60">60</option></select></div>
           <div class="actions-2">
             <button id="loadTopicsBtn" type="button">Load Topics</button>
@@ -501,7 +501,7 @@ def test_ui() -> HTMLResponse:
         </section>
 
         <section class="card">
-          <h3>Погода и радиация</h3>
+          <h3>Weather and Radiation</h3>
           <div class="actions-2">
             <button id="weatherBtn" type="button">Get Weather</button>
             <button id="clearSkyBtn" type="button">Get Clear-Sky</button>
@@ -511,7 +511,7 @@ def test_ui() -> HTMLResponse:
         </section>
 
         <section class="card">
-          <h3>Прогноз мощности</h3>
+          <h3>Power Forecast</h3>
           <div class="actions">
             <button id="predictCacheBtn" type="button">Predict (Cache)</button>
             <button id="predictRuntimeBtn" type="button">Predict (Runtime)</button>
@@ -521,9 +521,9 @@ def test_ui() -> HTMLResponse:
         </section>
 
         <section class="card">
-          <h3>Исторический job</h3>
+          <h3>History Job</h3>
           <div class="field"><label for="daysInput">days</label><input id="daysInput" type="number" min="1" value="3" /></div>
-          <div class="field"><label for="jobIdInput">job_id</label><input id="jobIdInput" placeholder="появится после старта" /></div>
+          <div class="field"><label for="jobIdInput">job_id</label><input id="jobIdInput" placeholder="will appear after start" /></div>
           <div class="actions-2">
             <button id="startJobBtn" type="button">Start Generate History</button>
             <button id="checkJobBtn" type="button">Check Job Status</button>
@@ -533,7 +533,7 @@ def test_ui() -> HTMLResponse:
         </section>
 
         <section class="card">
-          <h3>Наличие прогнозов</h3>
+          <h3>Forecast Availability</h3>
           <div class="field"><label for="forecastTopic">topic (optional)</label><input id="forecastTopic" /></div>
           <div class="grid-2">
             <div class="field"><label for="dateFrom">date_from</label><input id="dateFrom" type="date" /></div>
@@ -566,13 +566,13 @@ def test_ui() -> HTMLResponse:
 
       <div class="column">
         <section class="card">
-          <h3>Диагностика</h3>
+          <h3>Diagnostics</h3>
           <div class="meta">HTTP status: <span id="httpStatus">-</span> · latency: <span id="httpLatency">-</span></div>
           <div style="margin:8px 0;"><button id="copyJsonBtn" type="button">Copy JSON</button></div>
           <pre id="jsonPreview">{}</pre>
         </section>
         <section class="card">
-          <h3>Последние действия</h3>
+          <h3>Recent Actions</h3>
           <div id="actionLog" class="log-list"></div>
         </section>
         <section class="card">
@@ -730,7 +730,7 @@ def test_ui() -> HTMLResponse:
     const getSelectedTopic = () => {
       const topic = document.getElementById('topicSelect').value;
       if (!topic) {
-        throw new Error('Сначала выберите topic');
+        throw new Error('Please select a topic first');
       }
       return topic;
     };
@@ -784,7 +784,7 @@ def test_ui() -> HTMLResponse:
 
     const fillTopics = (topics) => {
       const sel = document.getElementById('topicSelect');
-      sel.innerHTML = '<option value="">-- выберите topic --</option>' + topics.map((t) => `<option value="${t.tag}">${t.tag}</option>`).join('');
+      sel.innerHTML = '<option value="">-- select topic --</option>' + topics.map((t) => `<option value="${t.tag}">${t.tag}</option>`).join('');
       if (state.topic && topics.some((t) => t.tag === state.topic)) {
         sel.value = state.topic;
       }
@@ -860,7 +860,7 @@ def test_ui() -> HTMLResponse:
 
     const checkJob = async () => {
       const jobId = document.getElementById('jobIdInput').value;
-      if (!jobId) throw new Error('Введите job_id');
+      if (!jobId) throw new Error('Enter job_id');
       const result = await request(`/jobs/${jobId}`);
       const state = result.data.state;
       const tone = state === 'failed' ? 'err' : (state === 'completed' ? 'ok' : 'warn');
