@@ -18,6 +18,7 @@ def run_migrations() -> None:
         topic TEXT NOT NULL,
         ts TIMESTAMPTZ NOT NULL,
         power DOUBLE PRECISION NOT NULL,
+        source TEXT NOT NULL DEFAULT 'unknown',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (topic, ts)
     ) PARTITION BY RANGE (ts);
@@ -27,6 +28,7 @@ def run_migrations() -> None:
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+        conn.execute(text("ALTER TABLE pv_forecast_points ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'unknown'"))
 
 
 def _month_bounds(ts: datetime) -> tuple[datetime, datetime]:
@@ -62,16 +64,17 @@ def delete_future(start_ts: datetime) -> None:
         conn.execute(text("DELETE FROM pv_forecast_points WHERE ts >= :start_ts"), {"start_ts": start_ts})
 
 
-def bulk_upsert_points(rows: Sequence[tuple[str, datetime, float]]) -> None:
+def bulk_upsert_points(rows: Sequence[tuple[str, datetime, float, str]]) -> None:
     if not rows:
         return
 
     sql = """
-    INSERT INTO pv_forecast_points (topic, ts, power)
+    INSERT INTO pv_forecast_points (topic, ts, power, source)
     VALUES %s
     ON CONFLICT (topic, ts)
     DO UPDATE SET
       power = EXCLUDED.power,
+      source = EXCLUDED.source,
       created_at = now()
     """
 
@@ -84,14 +87,14 @@ def bulk_upsert_points(rows: Sequence[tuple[str, datetime, float]]) -> None:
         raw_conn.close()
 
 
-def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -> dict[str, list[dict[str, float]]]:
+def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -> dict[str, list[dict[str, float | str]]]:
     if not topics:
         return {}
 
-    result: dict[str, list[dict[str, float]]] = {topic: [] for topic in topics}
+    result: dict[str, list[dict[str, float | str]]] = {topic: [] for topic in topics}
     query = text(
         """
-        SELECT topic, ts, power
+        SELECT topic, ts, power, source
         FROM pv_forecast_points
         WHERE topic = ANY(:topics)
           AND ts >= :start_ts
@@ -107,6 +110,7 @@ def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -
         result[row["topic"]].append({
             "x": row["ts"].strftime("%Y-%m-%d %H:%M"),
             "y": float(row["power"]),
+            "source": row["source"],
         })
 
     return result
