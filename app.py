@@ -105,6 +105,7 @@ class WeatherInfoResponse(BaseModel):
     source: Literal["archive_db", "weather_api", "none"]
     status: Literal["ok", "no_data"]
     points: list[WeatherPoint] = Field(default_factory=list)
+    diagnostics: dict[str, str] | None = None
 
 class ClearSkyRadiationRequest(BaseModel):
     tag: str | None = Field(default=None, description="Таг от tag_specification")
@@ -329,6 +330,7 @@ def weather_info(request: WeatherInfoRequest) -> WeatherInfoResponse:
         source=weather_result["source"],
         status=weather_result["status"],
         points=sanitized_points,
+        diagnostics=weather_result.get("diagnostics"),
     )
 
 @app.post("/radiation/clear-sky", response_model=ClearSkyRadiationResponse)
@@ -674,6 +676,15 @@ def test_ui() -> HTMLResponse:
       document.getElementById('jsonPreview').textContent = JSON.stringify(obj, null, 2);
     };
 
+    const safeJsonParse = (value) => {
+      if (!value) return null;
+      try {
+        return JSON.parse(value);
+      } catch (err) {
+        return { _parseError: err.message, _raw: String(value).slice(0, 1000) };
+      }
+    };
+
     const request = async (path, options = {}) => {
       persistState();
       const base = document.getElementById('baseUrl').value.replace(/\\/$/, '');
@@ -684,22 +695,29 @@ def test_ui() -> HTMLResponse:
         const res = await fetch(`${base}${path}`, { ...options, signal: controller.signal });
         const duration = Math.round(performance.now() - started);
         const text = await res.text();
-        const json = text ? JSON.parse(text) : {};
+        const json = safeJsonParse(text);
+        const requestBody = safeJsonParse(options.body);
         document.getElementById('httpStatus').textContent = res.status;
         document.getElementById('httpLatency').textContent = `${duration} ms`;
-        setJson({ endpoint: path, request: options.body ? JSON.parse(options.body) : null, response: json });
+        setJson({
+          endpoint: path,
+          request: requestBody,
+          response: json,
+          response_meta: { status: res.status, content_type: res.headers.get('content-type') || '' },
+        });
         if (!res.ok) {
-          throw new Error(json.detail || `HTTP ${res.status}`);
+          const detail = json && typeof json === 'object' ? json.detail : null;
+          throw new Error(detail || `HTTP ${res.status}`);
         }
         logAction(`${path} OK (${duration}ms)`, 'ok');
-        return { data: json, status: res.status, duration };
+        return { data: json || {}, status: res.status, duration };
       } catch (err) {
         const duration = Math.round(performance.now() - started);
         document.getElementById('httpLatency').textContent = `${duration} ms`;
         document.getElementById('httpStatus').textContent = 'error';
         const message = err.name === 'AbortError' ? 'Timeout (30s)' : err.message;
         logAction(`${path} FAIL: ${message}`, 'err');
-        setJson({ endpoint: path, error: message, request: options.body ? JSON.parse(options.body) : null });
+        setJson({ endpoint: path, error: message, request: safeJsonParse(options.body) });
         throw err;
       } finally {
         clearTimeout(timeout);
