@@ -37,6 +37,13 @@ def deserialize_java_object(binary_value):
         ) from exc
 
 
+def unwrap_value(obj):
+    """
+    If Java wrapper object exposes `.value`, return the wrapped primitive value.
+    """
+    return getattr(obj, "value", obj)
+
+
 def extract_forecast_data(forecast_obj):
     days = getattr(forecast_obj, "forecastday", None)
     if days is None:
@@ -64,13 +71,21 @@ def extract_forecast_data(forecast_obj):
                 original_exception=exc,
             ) from exc
         for hour in hours:
-            rec_time = getattr(hour, "time", None)
+            rec_time = unwrap_value(getattr(hour, "time", None))
             if rec_time is None:
                 continue
+
+            # Java payloads may expose camelCase fields and wrapper objects.
+            temp_raw = getattr(hour, "temp_c", None)
+            if temp_raw is None:
+                temp_raw = getattr(hour, "tempC", None)
+
+            cloud_raw = getattr(hour, "cloud", None)
+
             data.append({
                 "time": str(rec_time),
-                "temp_c": getattr(hour, "temp_c", None),
-                "cloud": getattr(hour, "cloud", None),
+                "temp_c": unwrap_value(temp_raw),
+                "cloud": unwrap_value(cloud_raw),
             })
     return data
 
@@ -122,8 +137,20 @@ def extract_weather_from_db(user_object_id, prediction_date):
             original_exception=exc,
         ) from exc
 
+    if "temp_c" not in df.columns or "cloud" not in df.columns:
+        raise WeatherArchiveError(
+            "weather_fields_missing",
+            "В исторической погоде отсутствуют ожидаемые поля temp_c/cloud",
+        )
+
     df["temp_c"] = pd.to_numeric(df["temp_c"], errors="coerce")
     df["cloud"] = pd.to_numeric(df["cloud"], errors="coerce")
+
+    if df[["temp_c", "cloud"]].notna().sum().sum() == 0:
+        raise WeatherArchiveError(
+            "weather_values_empty",
+            "Историческая погода прочитана, но temp_c и cloud пустые во всех исходных точках",
+        )
 
     df.set_index("time", inplace=True)
     df.sort_index(inplace=True)
@@ -143,5 +170,12 @@ def extract_weather_from_db(user_object_id, prediction_date):
     )
     if "cloud" in df_15min.columns:
         df_15min["cloud"] = df_15min["cloud"].round().astype("Int64")
+
+    if df_15min[["temp_c", "cloud"]].notna().sum().sum() == 0:
+        raise WeatherArchiveError(
+            "weather_values_empty_after_resample",
+            "После ресемплинга историческая погода содержит только пустые temp_c/cloud",
+        )
+
     df_15min["time"] = df_15min["time"].dt.strftime("%Y-%m-%d %H:%M")
     return df_15min.to_dict(orient="records")
