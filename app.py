@@ -13,11 +13,11 @@ from database import (
     get_all_topics_or_raise,
     get_tag_specification,
 )
-from forecast_db import run_migrations, select_available_forecasts, select_points
+from forecast_db import bulk_upsert_points, run_migrations, select_available_forecasts, select_points, select_topics_with_points
 from jobs.generate_forecasts import _build_rows_for_topic
 from jobs.history_service import history_job_service
 from radiation import calculate_panel_irradiance
-from weather_service import get_weather_for_date
+from weather_service import get_archive_weather_for_date, get_weather_for_date
 
 settings = load_settings()
 app = FastAPI()
@@ -134,6 +134,37 @@ class ClearSkyRadiationResponse(BaseModel):
     step_minutes: int
     points: list[ClearSkyPoint] = Field(default_factory=list)
 
+
+
+
+class CoverageCheckRequest(BaseModel):
+    prediction_date: str = Field(..., description="Дата във формат YYYY-MM-DD")
+    topics: list[str] = Field(default_factory=list)
+
+
+class MissingTopicReason(BaseModel):
+    tag: str
+    reason: str
+
+
+class CoverageCheckResponse(BaseModel):
+    date: str
+    total_topics_checked: int
+    missing_weather: list[MissingTopicReason] = Field(default_factory=list)
+    missing_cache: list[str] = Field(default_factory=list)
+
+
+class GenerateCacheRequest(BaseModel):
+    prediction_date: str = Field(..., description="Дата във формат YYYY-MM-DD")
+    topics: list[str] = Field(default_factory=list)
+
+
+class GenerateCacheResponse(BaseModel):
+    date: str
+    requested_topics: int
+    generated_topics: list[str] = Field(default_factory=list)
+    skipped_topics: list[MissingTopicReason] = Field(default_factory=list)
+    inserted_points: int
 
 @app.on_event("startup")
 def startup() -> None:
@@ -406,6 +437,108 @@ def calculate_clear_sky_radiation(request: ClearSkyRadiationRequest) -> ClearSky
     )
 
 
+
+
+@app.post("/coverage/check", response_model=CoverageCheckResponse)
+def coverage_check(request: CoverageCheckRequest) -> CoverageCheckResponse:
+    try:
+        day_start = datetime.strptime(request.prediction_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Невалиден формат на дата. Очаква се YYYY-MM-DD.")
+
+    topics = request.topics or get_all_topics_or_raise()
+    day_end = day_start + timedelta(days=1)
+    topics_with_cache = select_topics_with_points(topics, day_start, day_end)
+
+    missing_weather: list[MissingTopicReason] = []
+    missing_cache: list[str] = []
+
+    for topic in topics:
+        spec = get_tag_specification(topic)
+        if not spec:
+            missing_weather.append(MissingTopicReason(tag=topic, reason="Липсва спецификация за таг"))
+            missing_cache.append(topic)
+            continue
+
+        uid = spec.get("sm_user_object_id")
+        if uid is None:
+            missing_weather.append(MissingTopicReason(tag=topic, reason="Липсва sm_user_object_id"))
+        else:
+            weather_result = get_archive_weather_for_date(
+                user_object_id=int(uid),
+                prediction_date=day_start.date(),
+            )
+            if weather_result["status"] != "ok":
+                reason = "Няма историческа погода за избраната дата"
+                if weather_result.get("diagnostics") and weather_result["diagnostics"].get("archive_db_error"):
+                    reason = weather_result["diagnostics"]["archive_db_error"]
+                missing_weather.append(MissingTopicReason(tag=topic, reason=reason))
+
+        if topic not in topics_with_cache:
+            missing_cache.append(topic)
+
+    return CoverageCheckResponse(
+        date=request.prediction_date,
+        total_topics_checked=len(topics),
+        missing_weather=missing_weather,
+        missing_cache=missing_cache,
+    )
+
+
+@app.post("/forecasts/generate-cache", response_model=GenerateCacheResponse)
+def generate_cache(request: GenerateCacheRequest) -> GenerateCacheResponse:
+    try:
+        day_start = datetime.strptime(request.prediction_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Невалиден формат на дата. Очаква се YYYY-MM-DD.")
+
+    topics = request.topics or get_all_topics_or_raise()
+
+    rows: list[tuple[str, datetime, float, str]] = []
+    generated_topics: list[str] = []
+    skipped_topics: list[MissingTopicReason] = []
+
+    for topic in topics:
+        spec = get_tag_specification(topic)
+        if not spec:
+            skipped_topics.append(MissingTopicReason(tag=topic, reason="Липсва спецификация за таг"))
+            continue
+
+        uid = spec.get("sm_user_object_id")
+        if uid is None:
+            skipped_topics.append(MissingTopicReason(tag=topic, reason="Липсва sm_user_object_id"))
+            continue
+
+        weather_result = get_archive_weather_for_date(
+            user_object_id=int(uid),
+            prediction_date=day_start.date(),
+        )
+        if weather_result["status"] != "ok":
+            reason = "Няма историческа погода за избраната дата"
+            if weather_result.get("diagnostics") and weather_result["diagnostics"].get("archive_db_error"):
+                reason = weather_result["diagnostics"]["archive_db_error"]
+            skipped_topics.append(MissingTopicReason(tag=topic, reason=reason))
+            continue
+
+        built_rows = _build_rows_for_topic(topic, weather_result["records"], "archive_db")
+        if not built_rows:
+            skipped_topics.append(MissingTopicReason(tag=topic, reason="Няма достатъчно данни за изчисляване на прогноза"))
+            continue
+
+        rows.extend(built_rows)
+        generated_topics.append(topic)
+
+    if rows:
+        bulk_upsert_points(rows)
+
+    return GenerateCacheResponse(
+        date=request.prediction_date,
+        requested_topics=len(topics),
+        generated_topics=generated_topics,
+        skipped_topics=skipped_topics,
+        inserted_points=len(rows),
+    )
+
 @app.get("/test-ui", response_class=HTMLResponse)
 def test_ui() -> HTMLResponse:
     return HTMLResponse(
@@ -543,6 +676,15 @@ def test_ui() -> HTMLResponse:
         </section>
 
         <section class="card">
+          <h3>Coverage & Cache Generation</h3>
+          <div class="actions">
+            <button id="coverageBtn" type="button">Check Missing Weather/Cache</button>
+            <button id="generateCacheBtn" type="button">Generate Cache From Historical Weather</button>
+          </div>
+          <div id="coverageStatus" class="endpoint-status"></div>
+        </section>
+
+        <section class="card">
           <button id="smokeBtn" type="button">Run Smoke Flow</button>
         </section>
       </div>
@@ -582,6 +724,15 @@ def test_ui() -> HTMLResponse:
             <div class="summary-card"><div class="meta">Topics</div><strong id="afTopics">-</strong></div>
             <div class="summary-card"><div class="meta">Dates</div><strong id="afDates">-</strong></div>
           </div>
+        </section>
+        <section class="card">
+          <h3>Coverage Summary</h3>
+          <div class="summary-grid">
+            <div class="summary-card"><div class="meta">Checked topics</div><strong id="cvChecked">-</strong></div>
+            <div class="summary-card"><div class="meta">Missing weather</div><strong id="cvMissingWeather">-</strong></div>
+            <div class="summary-card"><div class="meta">Missing cache</div><strong id="cvMissingCache">-</strong></div>
+          </div>
+          <div class="meta" id="cvDetails" style="margin-top:8px; white-space: pre-wrap;"></div>
         </section>
       </div>
     </div>
@@ -886,6 +1037,54 @@ def test_ui() -> HTMLResponse:
       document.getElementById('afDates').textContent = result.data.dates.length;
     };
 
+
+
+    const renderCoverage = (data) => {
+      document.getElementById('cvChecked').textContent = data.total_topics_checked;
+      document.getElementById('cvMissingWeather').textContent = data.missing_weather.length;
+      document.getElementById('cvMissingCache').textContent = data.missing_cache.length;
+      const weatherRows = data.missing_weather.slice(0, 15).map((item) => `- ${item.tag}: ${item.reason}`);
+      const cacheRows = data.missing_cache.slice(0, 15).map((tag) => `- ${tag}`);
+      const details = [
+        'Missing weather:',
+        ...(weatherRows.length ? weatherRows : ['- none']),
+        '',
+        'Missing cache:',
+        ...(cacheRows.length ? cacheRows : ['- none']),
+      ].join('\n');
+      document.getElementById('cvDetails').textContent = details;
+    };
+
+    const checkCoverage = async () => {
+      const topic = getSelectedTopic();
+      const topics = topic ? [topic] : [];
+      const payload = { prediction_date: document.getElementById('dateInput').value, topics };
+      const result = await request('/coverage/check', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      renderCoverage(result.data);
+      setEndpointStatus('coverageStatus', `Checked=${result.data.total_topics_checked}, missing weather=${result.data.missing_weather.length}, missing cache=${result.data.missing_cache.length}`, 'ok');
+      return result.data;
+    };
+
+    const generateCache = async () => {
+      const coverage = await checkCoverage();
+      const weatherMissingSet = new Set((coverage.missing_weather || []).map((i) => i.tag));
+      const targetTopics = (coverage.missing_cache || []).filter((tag) => !weatherMissingSet.has(tag));
+      if (!targetTopics.length) {
+        setEndpointStatus('coverageStatus', 'Няма тагове за генериране: липсва cache без налична историческа погода.', 'warn');
+        return;
+      }
+
+      const payload = { prediction_date: document.getElementById('dateInput').value, topics: targetTopics };
+      const result = await request('/forecasts/generate-cache', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+
+      setEndpointStatus('coverageStatus', `Generated topics=${result.data.generated_topics.length}, inserted points=${result.data.inserted_points}, skipped=${result.data.skipped_topics.length}`, 'ok');
+      await checkCoverage();
+    };
+
     const runSmokeFlow = async () => {
       try {
         const topics = await loadTopics();
@@ -920,6 +1119,8 @@ def test_ui() -> HTMLResponse:
     document.getElementById('startJobBtn').addEventListener('click', () => startHistoryJob().catch((e) => alert(e.message)));
     document.getElementById('checkJobBtn').addEventListener('click', () => checkJob().catch((e) => alert(e.message)));
     document.getElementById('availableBtn').addEventListener('click', () => getAvailableForecasts().catch((e) => alert(e.message)));
+    document.getElementById('coverageBtn').addEventListener('click', () => checkCoverage().catch((e) => alert(e.message)));
+    document.getElementById('generateCacheBtn').addEventListener('click', () => generateCache().catch((e) => alert(e.message)));
     document.getElementById('smokeBtn').addEventListener('click', runSmokeFlow);
     document.getElementById('topicSelect').addEventListener('change', () => { persistState(); toggleTopicButtons(); document.getElementById('forecastTopic').value = document.getElementById('topicSelect').value; });
     ['baseUrl', 'dateInput', 'stepMinutes', 'daysInput', 'forecastTopic', 'dateFrom', 'dateTo'].forEach((id) => {
@@ -953,6 +1154,7 @@ def test_ui() -> HTMLResponse:
       }
       try {
         await loadTopics();
+        await checkCoverage();
       } catch (_) {
         toggleTopicButtons();
       }

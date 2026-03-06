@@ -14,6 +14,40 @@ class WeatherFetchResult(TypedDict):
     diagnostics: dict[str, str] | None
 
 
+def get_archive_weather_for_date(*, user_object_id: int, prediction_date: date) -> WeatherFetchResult:
+    """Load weather strictly from archive DB without fallback to API."""
+    diagnostics: dict[str, str] = {}
+    try:
+        records = extract_weather_from_db(user_object_id, prediction_date.strftime("%Y-%m-%d")) or []
+    except WeatherArchiveError as exc:
+        diagnostics["archive_db_stage"] = exc.stage
+        diagnostics["archive_db_error"] = str(exc)
+        return {"records": [], "source": "none", "status": "no_data", "diagnostics": diagnostics}
+    except Exception as exc:
+        diagnostics["archive_db_stage"] = "unexpected"
+        diagnostics["archive_db_error"] = str(exc)
+        return {"records": [], "source": "none", "status": "no_data", "diagnostics": diagnostics}
+
+    non_null_points = _weather_non_null_points(records)
+    if records:
+        diagnostics["archive_db_records"] = str(len(records))
+        diagnostics["archive_db_non_null_points"] = str(non_null_points)
+
+    if records and non_null_points > 0:
+        return {
+            "records": records,
+            "source": "archive_db",
+            "status": "ok",
+            "diagnostics": diagnostics or None,
+        }
+
+    if records:
+        diagnostics["archive_db_stage"] = "empty_weather_values"
+        diagnostics["archive_db_error"] = "records are present, but temp_c/cloud are null for all points"
+
+    return {"records": [], "source": "none", "status": "no_data", "diagnostics": diagnostics or None}
+
+
 def _weather_non_null_points(records: list[dict]) -> int:
     """Count points where at least one core weather field is present."""
     return sum(1 for rec in records if rec.get("temp_c") is not None or rec.get("cloud") is not None)
