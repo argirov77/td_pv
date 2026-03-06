@@ -9,7 +9,7 @@ from forecast_db import bulk_upsert_points, delete_future, ensure_month_partitio
 from model_loader import load_model
 from production import calculate_system_production
 from radiation import calculate_panel_irradiance
-from weather_service import get_archive_weather_for_date, get_weather_for_date
+from weather_service import get_weather_for_date
 
 THRESHOLD_RADIATION = 40
 settings = load_settings()
@@ -129,12 +129,12 @@ def run_history(days: int | None = None) -> None:
             lon = spec.get("longitude")
             if lat is None or lon is None:
                 continue
-            weather_result = get_archive_weather_for_date(
+            weather_result = get_weather_for_date(
                 user_object_id=int(uid),
+                latitude=float(lat),
+                longitude=float(lon),
                 prediction_date=day,
             )
-            if weather_result["status"] != "ok":
-                continue
             rows.extend(_build_rows_for_topic(topic, weather_result["records"], weather_result["source"]))
             if len(rows) >= 5000:
                 bulk_upsert_points(rows)
