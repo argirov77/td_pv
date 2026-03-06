@@ -159,3 +159,23 @@ def select_available_forecasts(
         "topics": found_topics,
         "dates": found_dates,
     }
+
+
+def select_topics_with_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -> set[str]:
+    if not topics:
+        return set()
+
+    query = text(
+        """
+        SELECT DISTINCT topic
+        FROM pv_forecast_points
+        WHERE topic = ANY(:topics)
+          AND ts >= :start_ts
+          AND ts < :end_ts
+        """
+    )
+
+    with engine.connect() as conn:
+        rows = conn.execute(query, {"topics": list(topics), "start_ts": start_ts, "end_ts": end_ts}).all()
+
+    return {row[0] for row in rows}
