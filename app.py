@@ -31,7 +31,6 @@ class PredictRequest(BaseModel):
 class PredictionPoint(BaseModel):
     x: str
     y: float
-    source: str
 
 
 class PredictResponse(BaseModel):
@@ -214,8 +213,8 @@ def predict_runtime(request: PredictRequest) -> PredictResponse:
         )
         rows = _build_rows_for_topic(topic, weather_result["records"], weather_result["source"])
         points[topic] = [
-            PredictionPoint(x=ts.strftime("%Y-%m-%d %H:%M"), y=power, source=source)
-            for _, ts, power, source in rows
+            PredictionPoint(x=ts.strftime("%Y-%m-%d %H:%M"), y=power)
+            for _, ts, power, _source in rows
             if day_start <= ts < day_end
         ]
 
@@ -594,6 +593,7 @@ def test_ui() -> HTMLResponse:
     let pollTimer = null;
     let latestPredictCache = [];
     let latestPredictRuntime = [];
+    let latestWeatherSource = '-';
 
     const defaults = {
       baseUrl: window.location.origin,
@@ -766,13 +766,13 @@ def test_ui() -> HTMLResponse:
       powerChart.update();
 
       const table = document.getElementById('powerTable');
-      table.innerHTML = '<thead><tr><th>time</th><th>cache</th><th>runtime</th><th>delta</th><th>source(runtime)</th></tr></thead><tbody>' +
+      table.innerHTML = '<thead><tr><th>time</th><th>cache</th><th>runtime</th><th>delta</th></tr></thead><tbody>' +
         labels.map((x) => {
           const c = cacheMap[x];
           const rItem = runtime.find((p) => p.x === x);
           const r = rItem ? rItem.y : null;
           const delta = (c != null && r != null) ? (r - c).toFixed(3) : '';
-          return `<tr><td>${x}</td><td>${c ?? ''}</td><td>${r ?? ''}</td><td>${delta}</td><td>${rItem?.source || ''}</td></tr>`;
+          return `<tr><td>${x}</td><td>${c ?? ''}</td><td>${r ?? ''}</td><td>${delta}</td></tr>`;
         }).join('') + '</tbody>';
     };
 
@@ -820,6 +820,7 @@ def test_ui() -> HTMLResponse:
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       renderWeather(result.data);
+      latestWeatherSource = result.data.source || '-';
       const tone = result.data.status === 'no_data' ? 'warn' : 'ok';
       setEndpointStatus('weatherStatus', `Weather: ${result.data.status}, source=${result.data.source}, points=${result.data.points.length}`, tone);
     };
@@ -845,8 +846,8 @@ def test_ui() -> HTMLResponse:
       if (runtime) latestPredictRuntime = points;
       else latestPredictCache = points;
       renderPower();
-      const weatherSource = runtime && points[0] ? points[0].source : '-';
-      setEndpointStatus('predictStatus', `${result.data.mode}: points=${points.length}, runtime weather source=${weatherSource}`, 'ok');
+      const weatherSource = runtime ? latestWeatherSource : '-';
+      setEndpointStatus('predictStatus', `${result.data.mode}: points=${points.length}, weather source=${weatherSource}`, 'ok');
     };
 
     const startHistoryJob = async () => {

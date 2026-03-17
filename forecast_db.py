@@ -94,7 +94,7 @@ def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -
     result: dict[str, list[dict[str, float | str]]] = {topic: [] for topic in topics}
     query = text(
         """
-        SELECT topic, ts, power, source
+        SELECT topic, ts, power
         FROM pv_forecast_points
         WHERE topic = ANY(:topics)
           AND ts >= :start_ts
@@ -110,7 +110,6 @@ def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -
         result[row["topic"]].append({
             "x": row["ts"].strftime("%Y-%m-%d %H:%M"),
             "y": float(row["power"]),
-            "source": row["source"],
         })
 
     return result
