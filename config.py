@@ -23,6 +23,7 @@ class Settings:
     forecast_history_days: int
     archive_db_dsn: str
     solar_db_dsn: str
+    weather_db_dsn: str
     forecast_db_dsn: str
     weather_api_key: str
     model_version: str
@@ -36,6 +37,7 @@ def load_settings() -> Settings:
         forecast_history_days=_int_from_env("FORECAST_HISTORY_DAYS", default=365),
         archive_db_dsn=_required("ARCHIVE_DB_DSN"),
         solar_db_dsn=_required("SOLAR_DB_DSN"),
+        weather_db_dsn=_required("WEATHER_DB_DSN"),
         forecast_db_dsn=_required("FORECAST_DB_DSN"),
         weather_api_key=_required("WEATHER_API_KEY"),
         model_version=_required("MODEL_VERSION"),

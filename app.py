@@ -49,6 +49,7 @@ class TopicListResponse(BaseModel):
 class TopicSpecItem(BaseModel):
     tag: str
     sm_user_object_id: int | None = None
+    replicator_id: int | None = None
     latitude: float | None = None
     longitude: float | None = None
     tilt: float | None = None
@@ -205,7 +206,9 @@ def predict_runtime(request: PredictRequest) -> PredictResponse:
         if uid is None or lat is None or lon is None:
             continue
 
+        rid = spec.get("replicator_id")
         weather_result = get_weather_for_date(
+            replicator_id=int(rid) if rid is not None else None,
             user_object_id=int(uid),
             latitude=float(lat),
             longitude=float(lon),
@@ -289,7 +292,9 @@ def weather_info(request: WeatherInfoRequest) -> WeatherInfoResponse:
     if latitude is None or longitude is None:
         raise HTTPException(status_code=400, detail="Липсват координати в спецификацията")
 
+    replicator_id = spec.get("replicator_id")
     weather_result = get_weather_for_date(
+        replicator_id=int(replicator_id) if replicator_id is not None else None,
         user_object_id=int(sm_user_object_id),
         latitude=float(latitude),
         longitude=float(longitude),
