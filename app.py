@@ -49,6 +49,7 @@ class TopicListResponse(BaseModel):
 class TopicSpecItem(BaseModel):
     tag: str
     sm_user_object_id: int | None = None
+    replicator_id: int | None = None
     latitude: float | None = None
     longitude: float | None = None
     tilt: float | None = None
@@ -102,7 +103,7 @@ class WeatherPoint(BaseModel):
 
 
 class WeatherInfoResponse(BaseModel):
-    source: Literal["archive_db", "weather_api", "none"]
+    source: Literal["archive_db_new", "archive_db", "weather_api", "none"]
     status: Literal["ok", "no_data"]
     points: list[WeatherPoint] = Field(default_factory=list)
     diagnostics: dict[str, str] | None = None
@@ -200,12 +201,14 @@ def predict_runtime(request: PredictRequest) -> PredictResponse:
             continue
 
         uid = spec.get("sm_user_object_id")
+        rid = spec.get("replicator_id")
         lat = spec.get("latitude")
         lon = spec.get("longitude")
         if uid is None or lat is None or lon is None:
             continue
 
         weather_result = get_weather_for_date(
+            replicator_id=int(rid) if rid is not None else None,
             user_object_id=int(uid),
             latitude=float(lat),
             longitude=float(lon),
@@ -284,12 +287,15 @@ def weather_info(request: WeatherInfoRequest) -> WeatherInfoResponse:
     if sm_user_object_id is None:
         raise HTTPException(status_code=400, detail="Липсва sm_user_object_id в спецификацията")
 
+    replicator_id = spec.get("replicator_id")
+
     latitude = spec.get("latitude")
     longitude = spec.get("longitude")
     if latitude is None or longitude is None:
         raise HTTPException(status_code=400, detail="Липсват координати в спецификацията")
 
     weather_result = get_weather_for_date(
+        replicator_id=int(replicator_id) if replicator_id is not None else None,
         user_object_id=int(sm_user_object_id),
         latitude=float(latitude),
         longitude=float(longitude),

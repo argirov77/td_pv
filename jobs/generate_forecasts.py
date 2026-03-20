@@ -84,6 +84,7 @@ def run_future() -> None:
         if not spec:
             continue
         uid = spec.get("sm_user_object_id")
+        rid = spec.get("replicator_id")
         lat = spec.get("latitude")
         lon = spec.get("longitude")
         if uid is None or lat is None or lon is None:
@@ -92,6 +93,7 @@ def run_future() -> None:
         for day_offset in range(settings.forecast_days_ahead + 1):
             target_day = (now + timedelta(days=day_offset)).date()
             weather_result = get_weather_for_date(
+                replicator_id=int(rid) if rid is not None else None,
                 user_object_id=int(uid),
                 latitude=float(lat),
                 longitude=float(lon),
@@ -120,6 +122,7 @@ def run_history(days: int | None = None) -> None:
         if not spec:
             continue
         uid = spec.get("sm_user_object_id")
+        rid = spec.get("replicator_id")
         if uid is None:
             continue
 
@@ -130,6 +133,7 @@ def run_history(days: int | None = None) -> None:
             if lat is None or lon is None:
                 continue
             weather_result = get_weather_for_date(
+                replicator_id=int(rid) if rid is not None else None,
                 user_object_id=int(uid),
                 latitude=float(lat),
                 longitude=float(lon),
