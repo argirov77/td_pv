@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Literal, TypedDict
 
 from weather_api import get_forecast_by_coords
-from weather_db import WeatherArchiveError, extract_weather_from_db, get_weather_by_replicator_id
+from weather_db import WeatherArchiveError, extract_weather_from_db
 
 
 class WeatherFetchResult(TypedDict):
@@ -21,7 +21,6 @@ def _weather_non_null_points(records: list[dict]) -> int:
 
 def get_weather_for_date(
     *,
-    replicator_id: int | None = None,
     user_object_id: int,
     latitude: float,
     longitude: float,
@@ -34,8 +33,8 @@ def get_weather_for_date(
     - исторически дати (prediction_date < днес) -> archive_db;
     - прогнозни дати (prediction_date >= днес) -> weather_api.
 
-    За archive_db: ако има replicator_id, първо опитва weather_main2 (нов сървър),
-    при неуспех прави fallback към solar_db (стар сървър) чрез sm_user_object_id.
+    Ако предпочитаният източник няма данни, прави fallback към другия източник,
+    за да покрие edge-case-а "няма данни никъде" с диагностика.
     """
     today = datetime.utcnow().date()
 
@@ -53,36 +52,35 @@ def get_weather_for_date(
             diagnostics[f"{source}_error"] = str(exc)
             return []
 
-    def _try_source(source: str, loader) -> WeatherFetchResult | None:
-        records = _load(source, loader)
-        non_null = _weather_non_null_points(records)
-        if records:
-            diagnostics[f"{source}_records"] = str(len(records))
-            diagnostics[f"{source}_non_null_points"] = str(non_null)
-        if records and non_null > 0:
-            return {"records": records, "source": source, "status": "ok", "diagnostics": diagnostics or None}
-        if records:
-            diagnostics[f"{source}_stage"] = "empty_weather_values"
-            diagnostics[f"{source}_error"] = "records are present, but temp_c/cloud are null for all points"
-        return None
-
-    date_str = prediction_date.strftime("%Y-%m-%d")
-
-    # Build ordered list of sources to try
-    archive_sources: list[tuple[str, object]] = []
-    if replicator_id is not None:
-        archive_sources.append(("archive_db_new", lambda: get_weather_by_replicator_id(replicator_id, date_str)))
-    archive_sources.append(("archive_db", lambda: extract_weather_from_db(user_object_id, date_str)))
-    api_source = ("weather_api", lambda: get_forecast_by_coords(latitude, longitude, prediction_date))
-
     if prediction_date < today:
-        sources = archive_sources + [api_source]
+        primary = ("archive_db", lambda: extract_weather_from_db(user_object_id, prediction_date.strftime("%Y-%m-%d")))
+        secondary = ("weather_api", lambda: get_forecast_by_coords(latitude, longitude, prediction_date))
     else:
-        sources = [api_source] + archive_sources
+        primary = ("weather_api", lambda: get_forecast_by_coords(latitude, longitude, prediction_date))
+        secondary = ("archive_db", lambda: extract_weather_from_db(user_object_id, prediction_date.strftime("%Y-%m-%d")))
 
-    for source_name, loader in sources:
-        result = _try_source(source_name, loader)
-        if result is not None:
-            return result
+    primary_source, primary_loader = primary
+    records = _load(primary_source, primary_loader)
+    primary_non_null_points = _weather_non_null_points(records)
+    if records:
+        diagnostics[f"{primary_source}_records"] = str(len(records))
+        diagnostics[f"{primary_source}_non_null_points"] = str(primary_non_null_points)
+    if records and primary_non_null_points > 0:
+        return {"records": records, "source": primary_source, "status": "ok", "diagnostics": diagnostics or None}
+    if records:
+        diagnostics[f"{primary_source}_stage"] = "empty_weather_values"
+        diagnostics[f"{primary_source}_error"] = "records are present, but temp_c/cloud are null for all points"
+
+    secondary_source, secondary_loader = secondary
+    records = _load(secondary_source, secondary_loader)
+    secondary_non_null_points = _weather_non_null_points(records)
+    if records:
+        diagnostics[f"{secondary_source}_records"] = str(len(records))
+        diagnostics[f"{secondary_source}_non_null_points"] = str(secondary_non_null_points)
+    if records and secondary_non_null_points > 0:
+        return {"records": records, "source": secondary_source, "status": "ok", "diagnostics": diagnostics or None}
+    if records:
+        diagnostics[f"{secondary_source}_stage"] = "empty_weather_values"
+        diagnostics[f"{secondary_source}_error"] = "records are present, but temp_c/cloud are null for all points"
 
     return {"records": [], "source": "none", "status": "no_data", "diagnostics": diagnostics or None}
