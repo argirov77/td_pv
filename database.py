@@ -67,6 +67,7 @@ def get_all_topic_specifications_or_raise() -> list[dict]:
                     SELECT
                         tag,
                         sm_user_object_id,
+                        replicator_id,
                         latitude,
                         longitude,
                         tilt,
