@@ -204,10 +204,10 @@ def extract_weather_from_db(user_object_id, prediction_date):
 # New path: weather_main2 on 172.31.168.3 (replicator_id -> user_objects -> weather_data)
 # ---------------------------------------------------------------------------
 
-_user_object_cache: dict[int, int] = {}
+_user_object_cache: dict[str, int] = {}
 
 
-def resolve_user_object_id(replicator_id: int) -> int | None:
+def resolve_user_object_id(replicator_id: str) -> int | None:
     """Look up user_object_id from user_objects table in weather_main2 by replicator_id."""
     if replicator_id in _user_object_cache:
         return _user_object_cache[replicator_id]
@@ -245,7 +245,7 @@ def extract_weather_from_new_db(user_object_id: int, prediction_date: str) -> li
     return _fetch_and_parse_weather(engine_weather_main, user_object_id, prediction_date, "weather_main2")
 
 
-def get_weather_by_replicator_id(replicator_id: int, prediction_date: str) -> list[dict]:
+def get_weather_by_replicator_id(replicator_id: str, prediction_date: str) -> list[dict]:
     """Resolve replicator_id -> user_object_id via user_objects, then extract weather from weather_main2."""
     user_object_id = resolve_user_object_id(replicator_id)
     if user_object_id is None:
