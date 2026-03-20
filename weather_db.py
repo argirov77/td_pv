@@ -201,7 +201,7 @@ def resolve_user_object_id(replicator_id: str) -> int | None:
         logger.info("[weather] resolved replicator_id=%s -> user_object_id=%s (cached)", replicator_id, cached)
         return cached
 
-    query = text("SELECT user_object_id FROM user_objects WHERE replicator_id = :replicator_id LIMIT 1")
+    query = text("SELECT id FROM user_objects WHERE replicator_id = :replicator_id LIMIT 1")
     try:
         with engine_weather_main.connect() as conn:
             row = conn.execute(query, {"replicator_id": replicator_id}).fetchone()
