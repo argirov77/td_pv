@@ -24,7 +24,7 @@ def _weather_non_null_points(records: list[dict]) -> int:
 
 def get_weather_for_date(
     *,
-    replicator_id: int | None = None,
+    replicator_id: str | None = None,
     user_object_id: int,
     latitude: float,
     longitude: float,

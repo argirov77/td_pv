@@ -49,7 +49,7 @@ class TopicListResponse(BaseModel):
 class TopicSpecItem(BaseModel):
     tag: str
     sm_user_object_id: int | None = None
-    replicator_id: int | None = None
+    replicator_id: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     tilt: float | None = None
@@ -208,7 +208,7 @@ def predict_runtime(request: PredictRequest) -> PredictResponse:
 
         rid = spec.get("replicator_id")
         weather_result = get_weather_for_date(
-            replicator_id=int(rid) if rid is not None else None,
+            replicator_id=rid,
             user_object_id=int(uid),
             latitude=float(lat),
             longitude=float(lon),
@@ -294,7 +294,7 @@ def weather_info(request: WeatherInfoRequest) -> WeatherInfoResponse:
 
     rid = spec.get("replicator_id")
     weather_result = get_weather_for_date(
-        replicator_id=int(rid) if rid is not None else None,
+        replicator_id=rid,
         user_object_id=int(sm_user_object_id),
         latitude=float(latitude),
         longitude=float(longitude),

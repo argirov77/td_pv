@@ -13,7 +13,7 @@ settings = load_settings()
 engine = create_engine(settings.solar_db_dsn, pool_pre_ping=True)
 engine_weather_main = create_engine(settings.weather_db_dsn, pool_pre_ping=True)
 
-_user_object_cache: dict[int, int] = {}
+_user_object_cache: dict[str, int] = {}
 
 
 class WeatherArchiveError(Exception):
@@ -194,7 +194,7 @@ def extract_weather_from_db(user_object_id, prediction_date):
     return _fetch_and_parse_weather(engine, user_object_id, prediction_date, "solar_db")
 
 
-def resolve_user_object_id(replicator_id: int) -> int | None:
+def resolve_user_object_id(replicator_id: str) -> int | None:
     """Lookup user_object_id by replicator_id in weather_main2."""
     if replicator_id in _user_object_cache:
         cached = _user_object_cache[replicator_id]
@@ -224,7 +224,7 @@ def extract_weather_from_new_db(user_object_id, prediction_date):
     return _fetch_and_parse_weather(engine_weather_main, user_object_id, prediction_date, "weather_main2")
 
 
-def get_weather_by_replicator_id(replicator_id: int, prediction_date) -> list[dict]:
+def get_weather_by_replicator_id(replicator_id: str, prediction_date) -> list[dict]:
     """Convenience: resolve replicator_id -> extract from new DB."""
     uid = resolve_user_object_id(replicator_id)
     if uid is None:
