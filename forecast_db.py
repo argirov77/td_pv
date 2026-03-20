@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Sequence
 
 from psycopg2.extras import execute_values
@@ -85,6 +85,38 @@ def bulk_upsert_points(rows: Sequence[tuple[str, datetime, float, str]]) -> None
         raw_conn.commit()
     finally:
         raw_conn.close()
+
+
+def find_missing_days(topic: str, start_date: date, end_date: date) -> list[date]:
+    query = text(
+        """
+        SELECT DISTINCT DATE(ts) AS day
+        FROM pv_forecast_points
+        WHERE topic = :topic
+          AND ts >= :start
+          AND ts < :end
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(query, {"topic": topic, "start": start_date, "end": end_date}).all()
+
+    existing = {row[0] for row in rows if row[0] is not None}
+    all_days: list[date] = []
+    cursor = start_date
+    while cursor < end_date:
+        all_days.append(cursor)
+        cursor += timedelta(days=1)
+
+    return [d for d in all_days if d not in existing]
+
+
+def delete_day(topic: str, day: date) -> None:
+    next_day = day + timedelta(days=1)
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM pv_forecast_points WHERE topic = :topic AND ts >= :day AND ts < :next_day"),
+            {"topic": topic, "day": day, "next_day": next_day},
+        )
 
 
 def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -> dict[str, list[dict[str, float | str]]]:

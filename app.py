@@ -14,7 +14,7 @@ from database import (
     get_tag_specification,
 )
 from forecast_db import run_migrations, select_available_forecasts, select_points
-from jobs.generate_forecasts import _build_rows_for_topic
+from jobs.generate_forecasts import _build_rows_for_topic, run_fixation
 from jobs.history_service import history_job_service
 from radiation import calculate_panel_irradiance
 from weather_service import get_weather_for_date
@@ -238,6 +238,19 @@ def generate_history_job(
 
     if creation["started"]:
         background_tasks.add_task(history_job_service.run_job, job["id"])
+
+    return GenerateHistoryResponse(started=creation["started"], job=JobResponse(**job))
+
+
+@app.post("/jobs/fix-yesterday", response_model=GenerateHistoryResponse, status_code=status.HTTP_202_ACCEPTED)
+def fix_yesterday_job(
+    background_tasks: BackgroundTasks,
+) -> GenerateHistoryResponse:
+    creation = history_job_service.create_job(days=1)
+    job = creation["job"]
+
+    if creation["started"]:
+        background_tasks.add_task(history_job_service.run_fixation_job, job["id"])
 
     return GenerateHistoryResponse(started=creation["started"], job=JobResponse(**job))
 

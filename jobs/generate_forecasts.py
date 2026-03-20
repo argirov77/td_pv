@@ -1,15 +1,18 @@
 import argparse
+import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
 
 from config import load_settings
 from database import get_all_topics, get_tag_specification
-from forecast_db import bulk_upsert_points, delete_future, ensure_month_partitions, run_migrations
+from forecast_db import bulk_upsert_points, delete_future, ensure_month_partitions, find_missing_days, run_migrations
 from model_loader import load_model
 from production import calculate_system_production
 from radiation import calculate_panel_irradiance
 from weather_service import get_weather_for_date
+
+logger = logging.getLogger(__name__)
 
 THRESHOLD_RADIATION = 40
 settings = load_settings()
@@ -116,22 +119,24 @@ def run_history(days: int | None = None) -> None:
     run_migrations()
     ensure_month_partitions(start, now)
 
-    rows = []
+    rows: list[tuple[str, datetime, float, str]] = []
     for topic in get_all_topics():
         spec = get_tag_specification(topic)
         if not spec:
             continue
         uid = spec.get("sm_user_object_id")
-        if uid is None:
+        lat = spec.get("latitude")
+        lon = spec.get("longitude")
+        if uid is None or lat is None or lon is None:
             continue
 
+        missing = find_missing_days(topic, start.date(), now.date())
+        if not missing:
+            continue
+
+        logger.info("[run_history] topic=%s missing_days=%d", topic, len(missing))
         rid = spec.get("replicator_id")
-        for day_offset in range(history_days + 1):
-            day = (start + timedelta(days=day_offset)).date()
-            lat = spec.get("latitude")
-            lon = spec.get("longitude")
-            if lat is None or lon is None:
-                continue
+        for day in missing:
             weather_result = get_weather_for_date(
                 replicator_id=rid,
                 user_object_id=int(uid),
@@ -148,16 +153,66 @@ def run_history(days: int | None = None) -> None:
         bulk_upsert_points(rows)
 
 
+def run_fixation() -> None:
+    yesterday = (datetime.utcnow() - timedelta(days=1)).date()
+    run_migrations()
+    ensure_month_partitions(
+        datetime.combine(yesterday, datetime.min.time()),
+        datetime.combine(yesterday, datetime.min.time()) + timedelta(days=1),
+    )
+
+    topics = get_all_topics()
+    processed = 0
+    skipped = 0
+
+    for topic in topics:
+        spec = get_tag_specification(topic)
+        if not spec:
+            skipped += 1
+            continue
+
+        uid = spec.get("sm_user_object_id")
+        lat = spec.get("latitude")
+        lon = spec.get("longitude")
+        if uid is None or lat is None or lon is None:
+            skipped += 1
+            continue
+
+        rid = spec.get("replicator_id")
+        weather_result = get_weather_for_date(
+            replicator_id=rid,
+            user_object_id=int(uid),
+            latitude=float(lat),
+            longitude=float(lon),
+            prediction_date=yesterday,
+        )
+
+        source = weather_result["source"]
+        if source == "weather_api":
+            skipped += 1
+            logger.info("[run_fixation] topic=%s skipped (source=weather_api, no archive data)", topic)
+            continue
+
+        rows = _build_rows_for_topic(topic, weather_result["records"], "archive_db")
+        if rows:
+            bulk_upsert_points(rows)
+            processed += 1
+
+    logger.info("[run_fixation] yesterday=%s processed=%d skipped=%d", yesterday, processed, skipped)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["future", "history"], required=True)
+    parser.add_argument("--mode", choices=["future", "history", "fixation"], required=True)
     parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
 
     if args.mode == "future":
         run_future()
-    else:
+    elif args.mode == "history":
         run_history(days=args.days)
+    else:
+        run_fixation()
 
 
 if __name__ == "__main__":

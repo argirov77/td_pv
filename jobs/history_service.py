@@ -4,7 +4,7 @@ from datetime import datetime
 from threading import Lock
 from uuid import uuid4
 
-from jobs.generate_forecasts import run_history
+from jobs.generate_forecasts import run_fixation, run_history
 
 
 class HistoryJobService:
@@ -44,6 +44,20 @@ class HistoryJobService:
         try:
             days = int(self._jobs[job_id]["days"])
             run_history(days=days)
+        except Exception as exc:
+            self._set_state(job_id, state="failed", error=str(exc), finished_at=datetime.utcnow())
+            raise
+        else:
+            self._set_state(job_id, state="completed", finished_at=datetime.utcnow())
+        finally:
+            with self._lock:
+                if self._running_job_id == job_id:
+                    self._running_job_id = None
+
+    def run_fixation_job(self, job_id: str) -> None:
+        self._set_state(job_id, state="running", started_at=datetime.utcnow())
+        try:
+            run_fixation()
         except Exception as exc:
             self._set_state(job_id, state="failed", error=str(exc), finished_at=datetime.utcnow())
             raise

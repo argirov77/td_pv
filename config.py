@@ -18,9 +18,11 @@ def _int_from_env(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    forecast_refresh_hours: int
+    forecast_refresh_minutes: int
     forecast_days_ahead: int
     forecast_history_days: int
+    fact_fixation_hour_utc: int
+    history_gap_max_days: int
     archive_db_dsn: str
     solar_db_dsn: str
     weather_db_dsn: str
@@ -32,9 +34,11 @@ class Settings:
 
 def load_settings() -> Settings:
     return Settings(
-        forecast_refresh_hours=_int_from_env("FORECAST_REFRESH_HOURS", default=3),
+        forecast_refresh_minutes=_int_from_env("FORECAST_REFRESH_MINUTES", default=30),
         forecast_days_ahead=_int_from_env("FORECAST_DAYS_AHEAD", default=7),
         forecast_history_days=_int_from_env("FORECAST_HISTORY_DAYS", default=365),
+        fact_fixation_hour_utc=_int_from_env("FACT_FIXATION_HOUR_UTC", default=1),
+        history_gap_max_days=_int_from_env("HISTORY_GAP_MAX_DAYS", default=3),
         archive_db_dsn=_required("ARCHIVE_DB_DSN"),
         solar_db_dsn=_required("SOLAR_DB_DSN"),
         weather_db_dsn=_required("WEATHER_DB_DSN"),
