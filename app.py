@@ -14,7 +14,7 @@ from database import (
     get_tag_specification,
 )
 from forecast_db import run_migrations, select_available_forecasts, select_points
-from jobs.generate_forecasts import _build_rows_for_topic
+from jobs.generate_forecasts import _build_rows_for_topic, run_fixation
 from jobs.history_service import history_job_service
 from radiation import calculate_panel_irradiance
 from weather_service import get_weather_for_date
@@ -248,6 +248,12 @@ def get_job_status(job_id: str) -> JobResponse:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobResponse(**job)
+
+
+@app.post("/jobs/fix-yesterday", status_code=status.HTTP_202_ACCEPTED)
+def fix_yesterday_job(background_tasks: BackgroundTasks) -> dict:
+    background_tasks.add_task(run_fixation)
+    return {"status": "started", "description": "Fixation of yesterday's actual data started in background"}
 
 
 @app.get("/topics", response_model=TopicListResponse)

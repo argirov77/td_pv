@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+import datetime as _dt
+from datetime import date, datetime
 from typing import Sequence
 
 from psycopg2.extras import execute_values
@@ -62,6 +63,29 @@ def ensure_month_partitions(start_ts: datetime, end_ts: datetime) -> None:
 def delete_future(start_ts: datetime) -> None:
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM pv_forecast_points WHERE ts >= :start_ts"), {"start_ts": start_ts})
+
+
+def find_missing_days(topic: str, start_date: date, end_date: date) -> list[date]:
+    query = text(
+        """
+        SELECT DISTINCT DATE(ts) AS day
+        FROM pv_forecast_points
+        WHERE topic = :topic AND ts >= :start AND ts < :end
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            query,
+            {"topic": topic, "start": datetime.combine(start_date, _dt.time.min), "end": datetime.combine(end_date, _dt.time.min)},
+        ).all()
+    existing = {row[0] for row in rows}
+    all_days = []
+    cursor = start_date
+    while cursor < end_date:
+        if cursor not in existing:
+            all_days.append(cursor)
+        cursor += _dt.timedelta(days=1)
+    return all_days
 
 
 def bulk_upsert_points(rows: Sequence[tuple[str, datetime, float, str]]) -> None:

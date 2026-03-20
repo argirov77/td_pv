@@ -1,15 +1,18 @@
 import argparse
+import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
 
 from config import load_settings
 from database import get_all_topics, get_tag_specification
-from forecast_db import bulk_upsert_points, delete_future, ensure_month_partitions, run_migrations
+from forecast_db import bulk_upsert_points, delete_future, ensure_month_partitions, find_missing_days, run_migrations
 from model_loader import load_model
 from production import calculate_system_production
 from radiation import calculate_panel_irradiance
 from weather_service import get_weather_for_date
+
+logger = logging.getLogger(__name__)
 
 THRESHOLD_RADIATION = 40
 settings = load_settings()
@@ -116,22 +119,28 @@ def run_history(days: int | None = None) -> None:
     run_migrations()
     ensure_month_partitions(start, now)
 
-    rows = []
+    start_date = start.date()
+    end_date = now.date()
+
+    rows: list[tuple] = []
     for topic in get_all_topics():
         spec = get_tag_specification(topic)
         if not spec:
             continue
         uid = spec.get("sm_user_object_id")
-        if uid is None:
+        lat = spec.get("latitude")
+        lon = spec.get("longitude")
+        if uid is None or lat is None or lon is None:
             continue
 
+        missing = find_missing_days(topic, start_date, end_date)
+        if not missing:
+            logger.debug("topic %s: no gaps found", topic)
+            continue
+
+        logger.info("topic %s: filling %d missing days", topic, len(missing))
         rid = spec.get("replicator_id")
-        for day_offset in range(history_days + 1):
-            day = (start + timedelta(days=day_offset)).date()
-            lat = spec.get("latitude")
-            lon = spec.get("longitude")
-            if lat is None or lon is None:
-                continue
+        for day in missing:
             weather_result = get_weather_for_date(
                 replicator_id=rid,
                 user_object_id=int(uid),
@@ -148,14 +157,60 @@ def run_history(days: int | None = None) -> None:
         bulk_upsert_points(rows)
 
 
+def run_fixation() -> None:
+    now = datetime.utcnow()
+    yesterday = (now - timedelta(days=1)).date()
+    run_migrations()
+    ensure_month_partitions(datetime.combine(yesterday, datetime.min.time()), now)
+
+    rows: list[tuple] = []
+    fixed = 0
+    skipped = 0
+    for topic in get_all_topics():
+        spec = get_tag_specification(topic)
+        if not spec:
+            continue
+        uid = spec.get("sm_user_object_id")
+        lat = spec.get("latitude")
+        lon = spec.get("longitude")
+        if uid is None or lat is None or lon is None:
+            continue
+
+        rid = spec.get("replicator_id")
+        weather_result = get_weather_for_date(
+            replicator_id=rid,
+            user_object_id=int(uid),
+            latitude=float(lat),
+            longitude=float(lon),
+            prediction_date=yesterday,
+        )
+        source = weather_result.get("source", "none")
+        if source == "weather_api" or source == "none":
+            skipped += 1
+            continue
+
+        rows.extend(_build_rows_for_topic(topic, weather_result["records"], "archive_db"))
+        fixed += 1
+        if len(rows) >= 5000:
+            bulk_upsert_points(rows)
+            rows.clear()
+
+    if rows:
+        bulk_upsert_points(rows)
+
+    logger.info("fixation for %s: fixed=%d, skipped=%d", yesterday, fixed, skipped)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["future", "history"], required=True)
+    parser.add_argument("--mode", choices=["future", "history", "fixation"], required=True)
     parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
 
     if args.mode == "future":
         run_future()
+    elif args.mode == "fixation":
+        run_fixation()
     else:
         run_history(days=args.days)
 
