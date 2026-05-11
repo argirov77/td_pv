@@ -11,6 +11,8 @@ from config import load_settings
 settings = load_settings()
 engine = create_engine(settings.forecast_db_dsn, pool_pre_ping=True)
 
+DISPLAY_TIME_SHIFT = timedelta(hours=3)
+
 
 def run_migrations() -> None:
     ddl = """
@@ -140,7 +142,7 @@ def select_points(topics: Sequence[str], start_ts: datetime, end_ts: datetime) -
 
     for row in rows:
         result[row["topic"]].append({
-            "x": row["ts"].strftime("%Y-%m-%d %H:%M"),
+            "x": (row["ts"] - DISPLAY_TIME_SHIFT).strftime("%Y-%m-%d %H:%M"),
             "y": float(row["power"]),
         })
 
