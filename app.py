@@ -22,6 +22,8 @@ from weather_service import get_weather_for_date
 settings = load_settings()
 app = FastAPI()
 
+DISPLAY_TIME_SHIFT = timedelta(hours=3)
+
 
 class PredictRequest(BaseModel):
     prediction_date: str = Field(..., description="Дата във формат YYYY-MM-DD")
@@ -216,7 +218,7 @@ def predict_runtime(request: PredictRequest) -> PredictResponse:
         )
         rows = _build_rows_for_topic(topic, weather_result["records"], weather_result["source"])
         points[topic] = [
-            PredictionPoint(x=ts.strftime("%Y-%m-%d %H:%M"), y=power)
+            PredictionPoint(x=(ts - DISPLAY_TIME_SHIFT).strftime("%Y-%m-%d %H:%M"), y=power)
             for _, ts, power, _source in rows
             if day_start <= ts < day_end
         ]
